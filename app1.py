@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Alignment, Font, Border, Side, PatternFill
 from io import BytesIO
 import os
 from datetime import datetime, date, time, timedelta
 import calendar
+import re
 
 # Librerías para PDF
 from reportlab.lib.pagesizes import landscape, letter
@@ -35,300 +35,27 @@ def cargar_competencias_gsheets():
                     base_datos[comp].append(rap)
         base_datos["OTRA (Escribir manualmente)"] = []
         return base_datos
-    except Exception as e:
+    except:
         return {"OTRA (Escribir manualmente)": []}
 
 DB_SENA = cargar_competencias_gsheets()
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA E INTERFAZ
-# ==========================================
-st.set_page_config(page_title="Reporte SENA", layout="wide")
-
-col_logo, col_tit = st.columns([1, 5])
-with col_logo:
-    if os.path.exists("logo_sena.png"):
-        st.image("logo_sena.png", width=100)
-
-with col_tit:
-    st.markdown("### CENTRO INDUSTRIAL Y DE ENERGIAS ALTERNATIVAS - REGIONAL GUAJIRA")
-    st.markdown("#### REPORTE ESTADISTICO DE HORAS MENSUALES INSTRUCTOR")
-
-with st.container():
-    c1, c2, c3, c4 = st.columns(4)
-    nombre = c1.text_input("Nombre del Instructor")
-    cedula = c2.text_input("Cédula")
-    meses_str = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    mes = c3.selectbox("Mes del Reporte", meses_str, index=1)
-    anio = c4.text_input("Año", value="2026")
-
-# ==========================================
-# SECCIÓN 1: HORAS DIRECTAS (FORMACIÓN)
-# ==========================================
-st.divider()
-st.markdown("### 📘 1. Parte Horas Directas - Formación Titulada")
-
-if 'filas' not in st.session_state:
-    st.session_state.filas = []
-
-if st.button("➕ Agregar Actividad de Formación"):
-    st.session_state.filas.append({
-        "ficha": "", "h_inicio": time(8, 0), "h_fin": time(12, 0), 
-        "dias": {"L": False, "M": False, "Mi": False, "J": False, "V": False, "S": False},
-        "competencia": list(DB_SENA.keys())[0] if DB_SENA else "OTRA (Escribir manualmente)", 
-        "rap": "", "horas": 0, 
-        "evaluado": "NO", "termino": "NO" 
-    })
-
-total_horas_directas = 0
-
-# Diccionario para recordar las fichas que ya se les preguntó el estado
-fichas_procesadas = {} 
-
-for i, fila in enumerate(st.session_state.filas):
-    with st.expander(f"📌 Ficha: {fila.get('ficha', 'Nueva Ficha')}", expanded=True):
-        col_1, col_2, col_3, col_4 = st.columns([1.5, 1, 1, 1])
-        fila['ficha'] = col_1.text_input("N° Ficha", value=fila.get('ficha', ''), key=f"f_{i}")
-        ficha_actual = fila['ficha'].strip() # Limpiamos espacios
-        
-        fila['h_inicio'] = col_2.time_input("Hora Inicio", value=fila.get('h_inicio', time(8,0)), key=f"hi_{i}")
-        fila['h_fin'] = col_3.time_input("Hora Fin", value=fila.get('h_fin', time(12,0)), key=f"hf_{i}")
-
-        cols_d = st.columns(6)
-        nombres_dias = ["L", "M", "Mi", "J", "V", "S"]
-        for idx, d_nom in enumerate(nombres_dias):
-            fila['dias'][d_nom] = cols_d[idx].checkbox(d_nom, value=fila['dias'].get(d_nom, False), key=f"chk_{d_nom}_{i}")
-
-        mes_num = meses_str.index(mes) + 1
-        anio_int = int(anio) if anio.isdigit() else 2026
-        _, num_dias_mes = calendar.monthrange(anio_int, mes_num)
-        
-        mapa_dias = {"L": 0, "M": 1, "Mi": 2, "J": 3, "V": 4, "S": 5}
-        dias_seleccionados = [mapa_dias[d] for d in nombres_dias if fila['dias'][d]]
-        
-        fechas_clase = []
-        for dia in range(1, num_dias_mes + 1):
-            fecha_actual = date(anio_int, mes_num, dia)
-            if fecha_actual.weekday() in dias_seleccionados:
-                fechas_clase.append(fecha_actual)
-
-        opciones_fechas = [f.strftime("%d/%m/%Y") for f in fechas_clase]
-        fechas_excluidas = st.multiselect("🚫 Fechas a descontar (Festivos, Paro):", opciones_fechas, key=f"excl_{i}")
-        
-        dt_inicio = datetime.combine(date.today(), fila['h_inicio'])
-        dt_fin = datetime.combine(date.today(), fila['h_fin'])
-        if dt_fin < dt_inicio: dt_fin += timedelta(days=1)
-        horas_diarias = (dt_fin - dt_inicio).seconds / 3600
-        
-        dias_efectivos = len(fechas_clase) - len(fechas_excluidas)
-        horas_totales_actividad = dias_efectivos * horas_diarias
-        fila['horas'] = horas_totales_actividad
-        total_horas_directas += horas_totales_actividad
-
-        col_4.metric("Total Automático", f"{horas_totales_actividad:g} hrs")
-
-        col_comp, col_rap = st.columns(2)
-        lista_comps = list(DB_SENA.keys())
-        if not lista_comps: lista_comps = ["OTRA (Escribir manualmente)"]
-        fila['competencia'] = col_comp.selectbox("Competencia", lista_comps, key=f"cp_{i}")
-        opciones_rap = DB_SENA.get(fila['competencia'], [])
-        
-        if fila['competencia'] == "OTRA (Escribir manualmente)" or not opciones_rap:
-            fila['rap'] = col_rap.text_area("Escriba el RAP", key=f"rpm_{i}")
-        else:
-            fila['rap'] = col_rap.selectbox("Seleccione el RAP", opciones_rap, key=f"rp_{i}")
-
-        # --- NUEVA LÓGICA INTELIGENTE DE BOTONES ---
-        if ficha_actual != "" and ficha_actual in fichas_procesadas:
-            # Si la ficha ya la vimos más arriba, copiamos la info y NO mostramos los botones
-            fila['evaluado'] = fichas_procesadas[ficha_actual]['evaluado']
-            fila['termino'] = fichas_procesadas[ficha_actual]['termino']
-            
-            st.info(f"💡 Estado heredado del bloque anterior (Ficha {ficha_actual}): **Evaluado:** {fila['evaluado']} | **Terminó:** {fila['termino']}")
-        else:
-            # Si es la primera vez que vemos la ficha en la lista, preguntamos.
-            st.markdown("**Estado de la Competencia / RAP:**")
-            col_ev, col_fin = st.columns(2)
-            fila['evaluado'] = col_ev.radio("✔️ ¿Está evaluado?", ["SÍ", "NO"], horizontal=True, key=f"ev_{i}", index=1 if fila.get('evaluado', 'NO') == 'NO' else 0)
-            fila['termino'] = col_fin.radio("🏁 ¿La competencia terminó?", ["SÍ", "NO"], horizontal=True, key=f"term_{i}", index=1 if fila.get('termino', 'NO') == 'NO' else 0)
-            st.markdown("---")
-            
-            # Guardamos la ficha en la memoria para que los de abajo no pregunten de nuevo
-            if ficha_actual != "":
-                fichas_procesadas[ficha_actual] = {
-                    'evaluado': fila['evaluado'],
-                    'termino': fila['termino']
-                }
-
-
-# ==========================================
-# SECCIÓN 2: OTRAS ACTIVIDADES (NUEVO)
-# ==========================================
-st.divider()
-st.markdown("### 📙 2. Parte Otras Actividades Instructores Planta")
-st.caption("Permisos sindicales, Eventos, Incapacidades, Festivos, etc. (El sistema calcula 8.5 horas por cada día reportado).")
-
-if 'otras_filas' not in st.session_state:
-    st.session_state.otras_filas = []
-
-if st.button("➕ Agregar Otra Actividad / Novedad"):
-    st.session_state.otras_filas.append({
-        "actividad": "Preparación de clases", 
-        "f_desde": date.today(), 
-        "f_hasta": date.today(),
-        "dias": 1.0, 
-        "horas": 8.5
-    })
-
-total_horas_otras = 0
-
-lista_otras_actividades = [
-    "Preparación de clases", "Incapacidad", "Festivo", "Licencia", 
-    "Permiso por estudio", "Permiso sindical", "Semana de confraternidad", 
-    "Eventos culturales", "Eventos deportivos", "Día del instructor", 
-    "Día de la familia", "Reuniones de Centro", "Otra"
-]
-
-for j, ofila in enumerate(st.session_state.otras_filas):
-    with st.container():
-        c_act, c_fd, c_fh, c_dias, c_hr = st.columns([2, 1, 1, 1, 1])
-        
-        ofila['actividad'] = c_act.selectbox("Actividad", lista_otras_actividades, key=f"oact_{j}")
-        ofila['f_desde'] = c_fd.date_input("Fecha Desde", value=ofila['f_desde'], key=f"ofd_{j}")
-        ofila['f_hasta'] = c_fh.date_input("Fecha Hasta", value=ofila['f_hasta'], key=f"ofh_{j}")
-        ofila['dias'] = c_dias.number_input("Cant. Días (Ej. 4)", min_value=0.0, step=0.5, value=float(ofila.get('dias', 1.0)), key=f"odias_{j}")
-        
-        ofila['horas'] = ofila['dias'] * 8.5
-        c_hr.metric("Total Horas", f"{ofila['horas']:g} hrs")
-        
-        total_horas_otras += ofila['horas']
-
-# ==========================================
-# TOTALES GLOBALES
-# ==========================================
-total_general_mes = total_horas_directas + total_horas_otras
-
-st.divider()
-st.sidebar.markdown("### 🧮 RESUMEN DEL MES")
-st.sidebar.metric("Formación Directa", f"{total_horas_directas:g} hrs")
-st.sidebar.metric("Otras Actividades", f"{total_horas_otras:g} hrs")
-st.sidebar.markdown("---")
-st.sidebar.metric("TOTAL GENERAL", f"{total_general_mes:g} hrs")
-
-# ==========================================
-# MOTOR DE EXPORTACIÓN A EXCEL
-# ==========================================
-def crear_excel(datos_formacion, datos_otras, tot_dir, tot_otr, tot_gen):
-    output = BytesIO()
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Reporte Mensual"
-
-    bold = Font(bold=True)
-    border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    fill_header = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-
-    ws.merge_cells('B2:O2')
-    ws['B2'] = "CENTRO INDUSTRIAL Y DE ENERGIAS ALTERNATIVAS - REGIONAL GUAJIRA"
-    ws['B2'].font = Font(bold=True, size=12)
-    ws['B2'].alignment = center
-
-    ws.merge_cells('B3:O3')
-    ws['B3'] = "REPORTE ESTADISTICO DE HORAS MENSUALES INSTRUCTOR"
-    ws['B3'].font = Font(bold=True, size=14)
-    ws['B3'].alignment = center
-    
-    ws['B6'] = f"INSTRUCTOR: {nombre}"
-    ws['J6'] = f"MES: {mes} / {anio}"
-    ws['B7'] = f"CÉDULA: {cedula}"
-
-    ws['B9'] = "PARTE HORAS DIRECTAS - PROGRAMAS EN FORMACIÓN TITULADA"
-    ws['B9'].font = bold
-
-    header_labels = ["FICHA", "DESDE", "HASTA", "L", "M", "MI", "J", "V", "S", "COMPETENCIA", "RAP", "EVALUADO", "TERMINÓ", "TOTAL"]
-    for col, text in enumerate(header_labels, 2):
-        cell = ws.cell(row=10, column=col, value=text)
-        cell.font, cell.border, cell.alignment, cell.fill = bold, border, center, fill_header
-
-    current_row = 11
-    for f in datos_formacion:
-        ws.cell(row=current_row, column=2, value=f['ficha']).border = border
-        ws.cell(row=current_row, column=3, value=f['h_inicio'].strftime("%H:%M")).border = border
-        ws.cell(row=current_row, column=4, value=f['h_fin'].strftime("%H:%M")).border = border
-        
-        for d_idx, d_nom in enumerate(["L", "M", "Mi", "J", "V", "S"], 5):
-            val = "X" if f['dias'][d_nom] else ""
-            c = ws.cell(row=current_row, column=d_idx, value=val)
-            c.border, c.alignment = border, center
-
-        ws.cell(row=current_row, column=11, value=f['competencia']).border = border
-        ws.cell(row=current_row, column=12, value=f['rap']).border = border
-        
-        c_ev = ws.cell(row=current_row, column=13, value=f.get('evaluado', 'NO'))
-        c_ev.border, c_ev.alignment = border, center
-        
-        c_fin = ws.cell(row=current_row, column=14, value=f.get('termino', 'NO'))
-        c_fin.border, c_fin.alignment = border, center
-        
-        ws.cell(row=current_row, column=15, value=f['horas']).border = border
-        current_row += 1
-
-    ws.cell(row=current_row, column=14, value="TOTAL DIRECTAS:").font = bold
-    ws.cell(row=current_row, column=15, value=tot_dir).font = bold
-    current_row += 3
-
-    ws.cell(row=current_row, column=2, value="PARTE OTRAS ACTIVIDADES INSTRUCTORES PLANTA").font = bold
-    current_row += 1
-    
-    headers_otras = ["ACTIVIDAD", "F. DESDE", "F. HASTA", "CANT. DÍAS", "HORAS"]
-    cols_otras = [2, 10, 11, 13, 14] 
-    
-    for h_txt, col_num in zip(headers_otras, cols_otras):
-        cell = ws.cell(row=current_row, column=col_num, value=h_txt)
-        cell.font, cell.border, cell.alignment, cell.fill = bold, border, center, fill_header
-    
-    current_row += 1
-    for of in datos_otras:
-        ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=9)
-        c_act = ws.cell(row=current_row, column=2, value=of['actividad'])
-        c_act.border, c_act.alignment = border, Alignment(horizontal='left')
-        
-        ws.cell(row=current_row, column=10, value=of['f_desde'].strftime("%d/%m/%Y")).border = border
-        ws.cell(row=current_row, column=11, value=of['f_hasta'].strftime("%d/%m/%Y")).border = border
-        ws.cell(row=current_row, column=13, value=of.get('dias', 0)).border = border
-        ws.cell(row=current_row, column=14, value=of['horas']).border = border
-        current_row += 1
-        
-    ws.cell(row=current_row, column=13, value="TOTAL OTRAS:").font = bold
-    ws.cell(row=current_row, column=14, value=tot_otr).font = bold
-    current_row += 2
-
-    ws.cell(row=current_row, column=13, value="TOTAL REPORTADAS:").font = Font(bold=True, size=12)
-    ws.cell(row=current_row, column=14, value=tot_gen).font = Font(bold=True, size=12)
-
-    ws.column_dimensions['K'].width = 35
-    ws.column_dimensions['L'].width = 45
-
-    wb.save(output)
-    return output.getvalue()
-
-# ==========================================
 # MOTOR DE EXPORTACIÓN A PDF
 # ==========================================
-def crear_pdf(datos_formacion, datos_otras, tot_dir, tot_otr, tot_gen):
+def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, tot_otr, tot_gen):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     elements = []
     
     styles = getSampleStyleSheet()
-    style_center = ParagraphStyle(name='Center', parent=styles['Normal'], alignment=1, fontSize=12, spaceAfter=6)
+    style_center = ParagraphStyle(name='Center', parent=styles['Normal'], alignment=1, fontSize=11, leading=14)
     style_title = ParagraphStyle(name='Title', parent=styles['Heading1'], alignment=1, fontSize=14, spaceAfter=12)
     style_cell = ParagraphStyle(name='Cell', parent=styles['Normal'], fontSize=8, leading=10)
     style_subtitle = ParagraphStyle(name='Sub', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', spaceAfter=6, spaceBefore=10)
 
     if os.path.exists("logo_sena.png"):
-        img = Image("logo_sena.png", width=1*inch, height=1*inch)
+        img = Image("logo_sena.png", width=0.7*inch, height=0.7*inch)
         img.hAlign = 'CENTER'
         elements.append(img)
     
@@ -338,97 +65,213 @@ def crear_pdf(datos_formacion, datos_otras, tot_dir, tot_otr, tot_gen):
     info_text = f"<b>INSTRUCTOR:</b> {nombre} &nbsp;&nbsp;&nbsp;&nbsp; <b>CÉDULA:</b> {cedula} &nbsp;&nbsp;&nbsp;&nbsp; <b>MES:</b> {mes} / {anio}"
     elements.append(Paragraph(info_text, styles['Normal']))
     
+    # Tabla Directa
     elements.append(Paragraph("PARTE HORAS DIRECTAS - PROGRAMAS EN FORMACIÓN TITULADA", style_subtitle))
-    
     data_table = [["FICHA", "DESDE", "HASTA", "L", "M", "MI", "J", "V", "S", "COMPETENCIA", "RAP", "EVAL", "TERM", "HRS"]]
     for f in datos_formacion:
-        row = [
-            f['ficha'], f['h_inicio'].strftime("%H:%M"), f['h_fin'].strftime("%H:%M"),
-            "X" if f['dias']["L"] else "", "X" if f['dias']["M"] else "",
-            "X" if f['dias']["Mi"] else "", "X" if f['dias']["J"] else "",
-            "X" if f['dias']["V"] else "", "X" if f['dias']["S"] else "",
-            Paragraph(f['competencia'], style_cell),
-            Paragraph(f['rap'], style_cell),
-            f.get('evaluado', 'NO'), f.get('termino', 'NO'), str(f"{f['horas']:g}")
-        ]
+        row = [f['ficha'], f['h_inicio'].strftime("%H:%M"), f['h_fin'].strftime("%H:%M"), "X" if f['dias']["L"] else "", "X" if f['dias']["M"] else "", "X" if f['dias']["Mi"] else "", "X" if f['dias']["J"] else "", "X" if f['dias']["V"] else "", "X" if f['dias']["S"] else "", Paragraph(f['competencia'], style_cell), Paragraph(f['rap'], style_cell), f.get('evaluado', 'NO'), f.get('termino', 'NO'), f"{f['horas']:g}"]
         data_table.append(row)
-    
-    data_table.append(["", "", "", "", "", "", "", "", "", "", "", "", "TOTAL:", str(f"{tot_dir:g}")])
+    data_table.append(["", "", "", "", "", "", "", "", "", "", "", "", "TOTAL:", f"{tot_dir:g}"])
 
-    col_widths_dir = [45, 35, 35, 15, 15, 15, 15, 15, 15, 195, 205, 30, 30, 25]
-    t_dir = Table(data_table, colWidths=col_widths_dir)
-    t_dir.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('GRID', (0,0), (-1,-1), 1, colors.black),
-        ('FONTNAME', (-2,-1), (-1,-1), 'Helvetica-Bold')
-    ]))
+    t_dir = Table(data_table, colWidths=[45, 35, 35, 15, 15, 15, 15, 15, 15, 195, 205, 30, 30, 25])
+    t_dir.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.lightgrey), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.black), ('FONTSIZE', (0,0), (-1,-1), 8)]))
     elements.append(t_dir)
     
+    # Tabla Otras
     if datos_otras:
-        elements.append(Spacer(1, 10))
+        elements.append(Spacer(1, 15))
         elements.append(Paragraph("PARTE OTRAS ACTIVIDADES INSTRUCTORES PLANTA", style_subtitle))
-        
         data_otras = [["ACTIVIDAD", "FECHA DESDE", "FECHA HASTA", "CANT. DÍAS", "HRS"]]
         for of in datos_otras:
-            data_otras.append([
-                of['actividad'], 
-                of['f_desde'].strftime("%d/%m/%Y"), 
-                of['f_hasta'].strftime("%d/%m/%Y"), 
-                str(f"{of.get('dias', 0):g}"),
-                str(f"{of['horas']:g}")
-            ])
-            
-        data_otras.append(["", "", "", "TOTAL OTRAS:", str(f"{tot_otr:g}")])
-        
+            data_otras.append([of['actividad'], of['f_desde'].strftime("%d/%m/%Y"), of['f_hasta'].strftime("%d/%m/%Y"), f"{of['dias']:g}", f"{of['horas']:g}"])
+        data_otras.append(["", "", "", "TOTAL OTRAS:", f"{tot_otr:g}"])
         t_otras = Table(data_otras, colWidths=[250, 110, 110, 100, 80])
-        t_otras.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 8),
-            ('GRID', (0,0), (-1,-1), 1, colors.black),
-            ('FONTNAME', (-2,-1), (-1,-1), 'Helvetica-Bold')
-        ]))
+        t_otras.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.lightgrey), ('GRID', (0,0), (-1,-1), 0.5, colors.black), ('ALIGN', (0,0), (-1,-1), 'CENTER')]))
         elements.append(t_otras)
     
-    elements.append(Spacer(1, 15))
-    elements.append(Paragraph(f"<b>TOTAL HORAS REPORTADAS EN EL MES: &nbsp; <font size=12>{tot_gen:g} Horas</font></b>", style_center))
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph(f"<b>TOTAL HORAS REPORTADAS EN EL MES: &nbsp; {tot_gen:g} Horas</b>", style_center))
     
-    fecha_descarga = datetime.now().strftime("%d/%m/%Y a las %H:%M")
-    style_firma = ParagraphStyle(name='Firma', parent=styles['Normal'], alignment=1, fontSize=11, leading=15)
-    
-    firma_html = f"""
-    <br/><br/><br/><br/>
-    _________________________________________________________<br/>
-    <b>FIRMA DEL INSTRUCTOR</b><br/>
-    {nombre}<br/>
-    C.C. {cedula}<br/><br/>
-    <i><font size="9" color="gray">Documento generado el: {fecha_descarga}</font></i>
-    """
-    elements.append(Paragraph(firma_html, style_firma))
+    fecha_gen = datetime.now().strftime("%d/%m/%Y %I:%M %p")
+    firma_html = f"<br/><br/><br/>_________________________________<br/><b>FIRMA DEL INSTRUCTOR</b><br/>{nombre}<br/>C.C. {cedula}<br/><br/><font size=8 color=gray>Reporte generado el: {fecha_gen}</font>"
+    elements.append(Paragraph(firma_html, style_center))
     
     doc.build(elements)
     return buffer.getvalue()
 
 # ==========================================
-# ÁREA DE DESCARGAS AUTOMÁTICAS
+# INTERFAZ STREAMLIT
 # ==========================================
-st.divider()
-st.markdown("### 📥 Generación de Reportes Finales")
+st.set_page_config(page_title="Reporte SENA CIEA", layout="wide")
 
-if not nombre or total_general_mes == 0:
-    st.warning("⚠️ Escribe tu nombre y asegúrate de tener horas reportadas para habilitar la descarga.")
-else:
-    excel_file = crear_excel(st.session_state.filas, st.session_state.otras_filas, total_horas_directas, total_horas_otras, total_general_mes)
-    pdf_file = crear_pdf(st.session_state.filas, st.session_state.otras_filas, total_horas_directas, total_horas_otras, total_general_mes)
+# CSS: BOTÓN VERDE 3D Y BOTONES ROJOS DE BORRADO
+st.markdown("""
+    <style>
+    /* Botón de Descarga Verde 3D */
+    div.stDownloadButton > button {
+        background: linear-gradient(145deg, #2ecc71, #27ae60) !important;
+        color: white !important;
+        height: 4.5em !important;
+        width: 100% !important;
+        border-radius: 15px !important;
+        font-weight: bold !important;
+        font-size: 24px !important;
+        border: none !important;
+        box-shadow: 0px 8px 0px #1e8449, 0px 10px 20px rgba(0,0,0,0.3) !important;
+        transition: all 0.1s ease !important;
+    }
+    div.stDownloadButton > button:hover { transform: translateY(2px) !important; box-shadow: 0px 5px 0px #1e8449 !important; }
     
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        st.download_button(label="🟢 DESCARGAR FORMATO EXCEL COMPLETO", data=excel_file, file_name=f"Reporte_{nombre.replace(' ', '_')}_{mes}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-    with col_btn2:
-        st.download_button(label="🔴 DESCARGAR FORMATO PDF PARA FIRMA", data=pdf_file, file_name=f"Reporte_{nombre.replace(' ', '_')}_{mes}.pdf", mime="application/pdf", use_container_width=True)
+    /* Botones de Borrar Rojos */
+    button[key^="df"], button[key^="do"] {
+        background-color: #ff0000 !important;
+        color: white !important;
+        border-radius: 10px !important;
+        font-weight: bold !important;
+        border: 2px solid #8b0000 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Encabezado con Logo (Corregido)
+col_logo, col_tit = st.columns([1, 6])
+with col_logo:
+    if os.path.exists("logo_sena.png"):
+        st.image("logo_sena.png", width=120)
+with col_tit:
+    st.markdown("## CENTRO INDUSTRIAL Y DE ENERGIAS ALTERNATIVAS")
+    st.markdown("#### REGIONAL GUAJIRA - Reporte Estadístico Mensual")
+
+with st.container():
+    c1, c2, c3, c4 = st.columns(4)
+    nombre_ins = c1.text_input("Nombre del Instructor")
+    cedula_ins = c2.text_input("Cédula")
+    meses_str = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    mes_rep = c3.selectbox("Mes del Reporte", meses_str, index=datetime.now().month - 1)
+    anio_rep = c4.text_input("Año", value="2026")
+
+if 'filas' not in st.session_state: st.session_state.filas = []
+if 'otras_filas' not in st.session_state: st.session_state.otras_filas = []
+
+# --- CARGA AUTOMÁTICA BLINDADA (Corregido para tu Excel) ---
+st.divider()
+with st.expander("🚀 Cargar Horario Automáticamente desde Excel Oficial", expanded=True):
+    archivo = st.file_uploader("Sube tu horario oficial", type=['xlsx', 'xls'])
+    if archivo and st.button("⚙️ Procesar Horario"):
+        try:
+            xls = pd.ExcelFile(archivo)
+            # Buscar hoja flexible (ignora si termina en -FEB-9 o similar)
+            hoja = next((n for n in xls.sheet_names if "HORARIOINSTRUCTOR" in n.upper() or "INSTRUCTORHORARIO" in n.upper()), None)
+            if hoja:
+                df_h = pd.read_excel(xls, sheet_name=hoja, header=None)
+                hora_col, start_row, grupo_cols = -1, -1, []
+                # Radar de cabeceras (escanea más profundo por las celdas combinadas)
+                for r in range(min(40, len(df_h))):
+                    row_vals = [str(x).strip().upper() for x in df_h.iloc[r].values]
+                    if 'HORA' in row_vals:
+                        hora_col = row_vals.index('HORA')
+                        start_row = r + 1
+                    for c, val in enumerate(row_vals):
+                        if 'GRUPO' in val:
+                            if c not in grupo_cols: grupo_cols.append(c)
+                
+                if hora_col != -1 and grupo_cols:
+                    dias_nom = ["L", "M", "Mi", "J", "V", "S"]
+                    day_cols = {dias_nom[i]: col for i, col in enumerate(sorted(list(set(grupo_cols)))) if i < 6}
+                    bloques = []
+                    for dia, col_idx in day_cols.items():
+                        cur_f, cur_s, cur_e = None, None, None
+                        for idx in range(start_row, len(df_h)):
+                            h_raw = str(df_h.iloc[idx, hora_col])
+                            m = re.findall(r'\d{1,2}:\d{2}', h_raw)
+                            if len(m) < 2: continue
+                            f_val = str(df_h.iloc[idx, col_idx]).strip().split('.')[0]
+                            f_limpia = f_val if f_val.isdigit() and len(f_val) > 3 else None
+                            if f_limpia:
+                                if cur_f == f_limpia and cur_e == m[0]: cur_e = m[1]
+                                else:
+                                    if cur_f: bloques.append({'ficha': cur_f, 'dia': dia, 'inicio': cur_s, 'fin': cur_e})
+                                    cur_f, cur_s, cur_e = f_limpia, m[0], m[1]
+                            else:
+                                if cur_f: bloques.append({'ficha': cur_f, 'dia': dia, 'inicio': cur_s, 'fin': cur_e})
+                                cur_f = None
+                        if cur_f: bloques.append({'ficha': cur_f, 'dia': dia, 'inicio': cur_s, 'fin': cur_e})
+
+                    agrupados = {}
+                    for b in bloques:
+                        k = (b['ficha'], b['inicio'], b['fin'])
+                        if k not in agrupados: agrupados[k] = []
+                        agrupados[k].append(b['dia'])
+                    
+                    st.session_state.filas = []
+                    for (f, i, fn), d_list in agrupados.items():
+                        st.session_state.filas.append({
+                            "ficha": f, "h_inicio": datetime.strptime(i, "%H:%M").time(), "h_fin": datetime.strptime(fn, "%H:%M").time(), 
+                            "dias": {d: (d in d_list) for d in dias_nom},
+                            "competencia": list(DB_SENA.keys())[0] if DB_SENA else "OTRA", "rap": "", "horas": 0, "evaluado": "NO", "termino": "NO"
+                        })
+                    st.success("✅ ¡Horario reconocido!")
+                    st.rerun()
+            else: st.error("❌ No se encontró la hoja de horario en el archivo.")
+        except Exception as e: st.error(f"Error: {e}")
+
+# --- FORMACIÓN DIRECTA ---
+total_dir = 0
+st.subheader("📘 1. Formación Directa")
+if st.button("➕ Agregar Ficha Manual"):
+    st.session_state.filas.append({"ficha":"","h_inicio":time(8,0),"h_fin":time(12,0),"dias":{d:False for d in ["L","M","Mi","J","V","S"]},"competencia":list(DB_SENA.keys())[0],"rap":"","horas":0,"evaluado":"NO","termino":"NO"})
+
+f_idx_del = []
+for i, fila in enumerate(st.session_state.filas):
+    with st.expander(f"📌 Ficha: {fila['ficha']} | {fila['h_inicio'].strftime('%H:%M')}", expanded=True):
+        c_dat, c_del = st.columns([0.85, 0.15])
+        if c_del.button("ELIMINAR", key=f"df{i}"): f_idx_del.append(i)
+        
+        c1, c2, c3, c4 = c_dat.columns([1.5, 1, 1, 1])
+        fila['ficha'] = c1.text_input("Ficha", fila['ficha'], key=f"f{i}")
+        fila['h_inicio'], fila['h_fin'] = c2.time_input("Inicio", fila['h_inicio'], key=f"hi{i}"), c3.time_input("Fin", fila['h_fin'], key=f"hf{i}")
+        cd = st.columns(6)
+        for idx, d in enumerate(["L", "M", "Mi", "J", "V", "S"]): fila['dias'][d] = cd[idx].checkbox(d, fila['dias'][d], key=f"d{d}{i}")
+        
+        h_dia = (datetime.combine(date.today(), fila['h_fin']) - datetime.combine(date.today(), fila['h_inicio'])).seconds / 3600
+        m_idx, a_int = meses_str.index(mes_rep) + 1, int(anio_rep)
+        fechas = [date(a_int, m_idx, d) for d in range(1, calendar.monthrange(a_int, m_idx)[1]+1) if date(a_int, m_idx, d).weekday() in [idx for idx, d in enumerate(["L", "M", "Mi", "J", "V", "S"]) if fila['dias'][d]]]
+        excl = st.multiselect("Descontar festivos:", [f.strftime("%d/%m/%Y") for f in fechas], key=f"ex{i}")
+        fila['horas'] = (len(fechas) - len(excl)) * h_dia
+        total_dir += fila['horas']
+        c4.metric("Subtotal", f"{fila['horas']:g} hrs")
+        fila['competencia'] = st.selectbox("Competencia", list(DB_SENA.keys()), key=f"cp{i}")
+        ops = DB_SENA.get(fila['competencia'], [])
+        fila['rap'] = st.selectbox("RAP", ops, key=f"rp{i}") if ops else st.text_area("RAP manual", key=f"rpm{i}")
+
+for idx in reversed(f_idx_del): st.session_state.filas.pop(idx); st.rerun()
+
+# --- OTRAS ACTIVIDADES ---
+st.divider()
+st.subheader("📙 2. Otras Actividades (Instructores de Planta)")
+if st.button("➕ Agregar Actividad Planta"):
+    st.session_state.otras_filas.append({"actividad": "Preparación de clases", "f_desde": date.today(), "f_hasta": date.today(), "dias": 1.0, "horas": 8.5})
+
+lista_planta = ["Preparación de clases", "Semana de confraternidad", "Actividades deportivas", "Encuentros culturales", "Día del instructor", "Permiso Sindical", "Incapacidad médica", "Permiso particular", "Permiso por estudio", "Día de la familia", "Festivo", "Otro"]
+total_otr, o_idx_del = 0, []
+for j, ofila in enumerate(st.session_state.otras_filas):
+    with st.container():
+        c1, c2, c3, c4, c5, c6 = st.columns([2, 1, 1, 0.8, 0.8, 0.4])
+        ofila['actividad'] = c1.selectbox("Actividad", lista_planta, key=f"oa{j}")
+        ofila['f_desde'], ofila['f_hasta'], ofila['dias'] = c2.date_input("Desde", ofila['f_desde'], key=f"ofd{j}"), c3.date_input("Hasta", ofila['f_hasta'], key=f"ofh{j}"), c4.number_input("Días", 0.0, 31.0, float(ofila['dias']), step=0.5, key=f"od{j}")
+        ofila['horas'] = ofila['dias'] * 8.5
+        c5.metric("Hrs", f"{ofila['horas']:g}")
+        if c6.button("X", key=f"do{j}"): o_idx_del.append(j)
+        total_otr += ofila['horas']
+
+for idx in reversed(o_idx_del): st.session_state.otras_filas.pop(idx); st.rerun()
+
+# --- BARRA LATERAL (Sidebar) ---
+total_mes = total_dir + total_otr
+if os.path.exists("logo_sena.png"):
+    st.sidebar.image("logo_sena.png", width=100)
+st.sidebar.markdown(f"### 📊 RESUMEN\n**Formación:** {total_dir:g} hrs\n**Otras:** {total_otr:g} hrs\n---\n**TOTAL MES:** {total_mes:g} hrs")
+
+if nombre_ins and total_mes > 0:
+    pdf_f = crear_pdf(nombre_ins, cedula_ins, mes_rep, anio_rep, st.session_state.filas, st.session_state.otras_filas, total_dir, total_otr, total_mes)
+    st.download_button(label="📥 DESCARGAR REPORTE PDF FINAL (3D)", data=pdf_f, file_name=f"Reporte_{nombre_ins}_{mes_rep}.pdf", mime="application/pdf")
