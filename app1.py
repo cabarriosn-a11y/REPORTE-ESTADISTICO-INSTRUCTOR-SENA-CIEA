@@ -65,7 +65,7 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
     info_text = f"<b>INSTRUCTOR:</b> {nombre} &nbsp;&nbsp;&nbsp;&nbsp; <b>CÉDULA:</b> {cedula} &nbsp;&nbsp;&nbsp;&nbsp; <b>MES:</b> {mes} / {anio}"
     elements.append(Paragraph(info_text, styles['Normal']))
     
-    # Tabla Directa
+    # 1. TABLA DIRECTA
     elements.append(Paragraph("PARTE HORAS DIRECTAS - PROGRAMAS EN FORMACIÓN TITULADA", style_subtitle))
     data_table = [["FICHA", "DESDE", "HASTA", "L", "M", "MI", "J", "V", "S", "COMPETENCIA", "RAP", "EVAL", "TERM", "HRS"]]
     for f in datos_formacion:
@@ -77,7 +77,6 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
     t_dir.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.lightgrey), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.black), ('FONTSIZE', (0,0), (-1,-1), 8)]))
     elements.append(t_dir)
     
-    # Tabla Otras
     if datos_otras:
         elements.append(Spacer(1, 15))
         elements.append(Paragraph("PARTE OTRAS ACTIVIDADES INSTRUCTORES PLANTA", style_subtitle))
@@ -104,10 +103,9 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
 # ==========================================
 st.set_page_config(page_title="Reporte SENA CIEA", layout="wide")
 
-# CSS: BOTÓN VERDE 3D Y BOTONES ROJOS DE BORRADO
+# CSS: Botón Verde 3D y Borrado Rojo
 st.markdown("""
     <style>
-    /* Botón de Descarga Verde 3D */
     div.stDownloadButton > button {
         background: linear-gradient(145deg, #2ecc71, #27ae60) !important;
         color: white !important;
@@ -122,7 +120,6 @@ st.markdown("""
     }
     div.stDownloadButton > button:hover { transform: translateY(2px) !important; box-shadow: 0px 5px 0px #1e8449 !important; }
     
-    /* Botones de Borrar Rojos */
     button[key^="df"], button[key^="do"] {
         background-color: #ff0000 !important;
         color: white !important;
@@ -133,7 +130,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Encabezado con Logo (Corregido)
+# Logo
 col_logo, col_tit = st.columns([1, 6])
 with col_logo:
     if os.path.exists("logo_sena.png"):
@@ -153,24 +150,21 @@ with st.container():
 if 'filas' not in st.session_state: st.session_state.filas = []
 if 'otras_filas' not in st.session_state: st.session_state.otras_filas = []
 
-# --- CARGA AUTOMÁTICA BLINDADA (Corregido para tu Excel) ---
+# --- CARGA AUTOMÁTICA BLINDADA ---
 st.divider()
-with st.expander("🚀 Cargar Horario Automáticamente desde Excel Oficial", expanded=True):
+with st.expander("🚀 Cargar Horario Automáticamente desde Excel", expanded=True):
     archivo = st.file_uploader("Sube tu horario oficial", type=['xlsx', 'xls'])
     if archivo and st.button("⚙️ Procesar Horario"):
         try:
             xls = pd.ExcelFile(archivo)
-            # Buscar hoja flexible (ignora si termina en -FEB-9 o similar)
             hoja = next((n for n in xls.sheet_names if "HORARIOINSTRUCTOR" in n.upper() or "INSTRUCTORHORARIO" in n.upper()), None)
             if hoja:
                 df_h = pd.read_excel(xls, sheet_name=hoja, header=None)
                 hora_col, start_row, grupo_cols = -1, -1, []
-                # Radar de cabeceras (escanea más profundo por las celdas combinadas)
                 for r in range(min(40, len(df_h))):
                     row_vals = [str(x).strip().upper() for x in df_h.iloc[r].values]
                     if 'HORA' in row_vals:
-                        hora_col = row_vals.index('HORA')
-                        start_row = r + 1
+                        hora_col, start_row = row_vals.index('HORA'), r + 1
                     for c, val in enumerate(row_vals):
                         if 'GRUPO' in val:
                             if c not in grupo_cols: grupo_cols.append(c)
@@ -212,7 +206,6 @@ with st.expander("🚀 Cargar Horario Automáticamente desde Excel Oficial", exp
                         })
                     st.success("✅ ¡Horario reconocido!")
                     st.rerun()
-            else: st.error("❌ No se encontró la hoja de horario en el archivo.")
         except Exception as e: st.error(f"Error: {e}")
 
 # --- FORMACIÓN DIRECTA ---
@@ -222,42 +215,60 @@ if st.button("➕ Agregar Ficha Manual"):
     st.session_state.filas.append({"ficha":"","h_inicio":time(8,0),"h_fin":time(12,0),"dias":{d:False for d in ["L","M","Mi","J","V","S"]},"competencia":list(DB_SENA.keys())[0],"rap":"","horas":0,"evaluado":"NO","termino":"NO"})
 
 f_idx_del = []
+fichas_memo = {} # Para heredar Evaluado/Terminó
+
 for i, fila in enumerate(st.session_state.filas):
     with st.expander(f"📌 Ficha: {fila['ficha']} | {fila['h_inicio'].strftime('%H:%M')}", expanded=True):
         c_dat, c_del = st.columns([0.85, 0.15])
-        if c_del.button("ELIMINAR", key=f"df{i}"): f_idx_del.append(i)
+        if c_del.button("BORRAR", key=f"df{i}"): f_idx_del.append(i)
         
         c1, c2, c3, c4 = c_dat.columns([1.5, 1, 1, 1])
         fila['ficha'] = c1.text_input("Ficha", fila['ficha'], key=f"f{i}")
+        ficha_actual = fila['ficha'].strip()
         fila['h_inicio'], fila['h_fin'] = c2.time_input("Inicio", fila['h_inicio'], key=f"hi{i}"), c3.time_input("Fin", fila['h_fin'], key=f"hf{i}")
         cd = st.columns(6)
         for idx, d in enumerate(["L", "M", "Mi", "J", "V", "S"]): fila['dias'][d] = cd[idx].checkbox(d, fila['dias'][d], key=f"d{d}{i}")
         
-        h_dia = (datetime.combine(date.today(), fila['h_fin']) - datetime.combine(date.today(), fila['h_inicio'])).seconds / 3600
         m_idx, a_int = meses_str.index(mes_rep) + 1, int(anio_rep)
         fechas = [date(a_int, m_idx, d) for d in range(1, calendar.monthrange(a_int, m_idx)[1]+1) if date(a_int, m_idx, d).weekday() in [idx for idx, d in enumerate(["L", "M", "Mi", "J", "V", "S"]) if fila['dias'][d]]]
         excl = st.multiselect("Descontar festivos:", [f.strftime("%d/%m/%Y") for f in fechas], key=f"ex{i}")
+        
+        h_dia = (datetime.combine(date.today(), fila['h_fin']) - datetime.combine(date.today(), fila['h_inicio'])).seconds / 3600
         fila['horas'] = (len(fechas) - len(excl)) * h_dia
         total_dir += fila['horas']
         c4.metric("Subtotal", f"{fila['horas']:g} hrs")
+        
         fila['competencia'] = st.selectbox("Competencia", list(DB_SENA.keys()), key=f"cp{i}")
         ops = DB_SENA.get(fila['competencia'], [])
         fila['rap'] = st.selectbox("RAP", ops, key=f"rp{i}") if ops else st.text_area("RAP manual", key=f"rpm{i}")
+
+        # BOTONES DE EVALUADO Y TERMINÓ
+        st.markdown("**Estado de la Competencia / RAP:**")
+        if ficha_actual != "" and ficha_actual in fichas_memo:
+            fila['evaluado'] = fichas_memo[ficha_actual]['evaluado']
+            fila['termino'] = fichas_memo[ficha_actual]['termino']
+            st.info(f"💡 Estado heredado de ficha {ficha_actual}")
+        else:
+            ce, ct = st.columns(2)
+            fila['evaluado'] = ce.radio("¿Está Evaluado?", ["SÍ", "NO"], index=0 if fila['evaluado']=="SÍ" else 1, horizontal=True, key=f"ev{i}")
+            fila['termino'] = ct.radio("¿Ya Terminó?", ["SÍ", "NO"], index=0 if fila['termino']=="SÍ" else 1, horizontal=True, key=f"tm{i}")
+            if ficha_actual != "":
+                fichas_memo[ficha_actual] = {'evaluado': fila['evaluado'], 'termino': fila['termino']}
 
 for idx in reversed(f_idx_del): st.session_state.filas.pop(idx); st.rerun()
 
 # --- OTRAS ACTIVIDADES ---
 st.divider()
-st.subheader("📙 2. Otras Actividades (Instructores de Planta)")
+st.subheader("📙 2. Otras Actividades (Planta)")
 if st.button("➕ Agregar Actividad Planta"):
     st.session_state.otras_filas.append({"actividad": "Preparación de clases", "f_desde": date.today(), "f_hasta": date.today(), "dias": 1.0, "horas": 8.5})
 
-lista_planta = ["Preparación de clases", "Semana de confraternidad", "Actividades deportivas", "Encuentros culturales", "Día del instructor", "Permiso Sindical", "Incapacidad médica", "Permiso particular", "Permiso por estudio", "Día de la familia", "Festivo", "Otro"]
+lista_p = ["Preparación de clases", "Semana de confraternidad", "Actividades deportivas", "Encuentros culturales", "Día del instructor", "Permiso Sindical", "Incapacidad médica", "Permiso particular", "Permiso por estudio", "Día de la familia", "Festivo", "Otro"]
 total_otr, o_idx_del = 0, []
 for j, ofila in enumerate(st.session_state.otras_filas):
     with st.container():
         c1, c2, c3, c4, c5, c6 = st.columns([2, 1, 1, 0.8, 0.8, 0.4])
-        ofila['actividad'] = c1.selectbox("Actividad", lista_planta, key=f"oa{j}")
+        ofila['actividad'] = c1.selectbox("Actividad", lista_p, key=f"oa{j}")
         ofila['f_desde'], ofila['f_hasta'], ofila['dias'] = c2.date_input("Desde", ofila['f_desde'], key=f"ofd{j}"), c3.date_input("Hasta", ofila['f_hasta'], key=f"ofh{j}"), c4.number_input("Días", 0.0, 31.0, float(ofila['dias']), step=0.5, key=f"od{j}")
         ofila['horas'] = ofila['dias'] * 8.5
         c5.metric("Hrs", f"{ofila['horas']:g}")
@@ -270,7 +281,7 @@ for idx in reversed(o_idx_del): st.session_state.otras_filas.pop(idx); st.rerun(
 total_mes = total_dir + total_otr
 if os.path.exists("logo_sena.png"):
     st.sidebar.image("logo_sena.png", width=100)
-st.sidebar.markdown(f"### 📊 RESUMEN\n**Formación:** {total_dir:g} hrs\n**Otras:** {total_otr:g} hrs\n---\n**TOTAL MES:** {total_mes:g} hrs")
+st.sidebar.markdown(f"### 📊 RESUMEN\n**Formación Directa:** {total_dir:g} hrs\n**Otras Actividades:** {total_otr:g} hrs\n---\n**TOTAL MES:** {total_mes:g} hrs")
 
 if nombre_ins and total_mes > 0:
     pdf_f = crear_pdf(nombre_ins, cedula_ins, mes_rep, anio_rep, st.session_state.filas, st.session_state.otras_filas, total_dir, total_otr, total_mes)
