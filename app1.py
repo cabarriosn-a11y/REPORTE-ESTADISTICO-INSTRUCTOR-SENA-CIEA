@@ -268,17 +268,25 @@ for i, fila in enumerate(st.session_state.filas):
         # --- INICIO LÓGICA DE HERENCIA INTELIGENTE ---
         es_heredado = False
         if ficha_actual != "" and ficha_actual in fichas_memo:
-            # Si ya vimos esta ficha arriba, copiamos TODO y activamos el modo herencia
+            es_heredado = True
             fila['competencia'] = fichas_memo[ficha_actual]['competencia']
             fila['rap'] = fichas_memo[ficha_actual]['rap']
             fila['evaluado'] = fichas_memo[ficha_actual]['evaluado']
             fila['termino'] = fichas_memo[ficha_actual]['termino']
-            es_heredado = True
             
-        # UI: Competencia (Busca el índice correcto para el selectbox)
+            # 💡 EL TRUCO: Forzar a Streamlit a olvidar su valor anterior y usar el heredado
+            st.session_state[f"cp{i}"] = fila['competencia']
+            
+            # También forzamos la memoria del RAP (ya sea menú desplegable o texto manual)
+            ops_memo = DB_SENA.get(fila['competencia'], [])
+            if ops_memo and fila['rap'] in ops_memo:
+                st.session_state[f"rp{i}"] = fila['rap']
+            else:
+                st.session_state[f"rpm{i}"] = fila['rap']
+            
+        # UI: Competencia
         lista_comps = list(DB_SENA.keys())
         idx_comp = lista_comps.index(fila['competencia']) if fila['competencia'] in lista_comps else 0
-        
         fila['competencia'] = st.selectbox("Competencia", lista_comps, index=idx_comp, key=f"cp{i}", disabled=es_heredado)
         
         # UI: RAP
