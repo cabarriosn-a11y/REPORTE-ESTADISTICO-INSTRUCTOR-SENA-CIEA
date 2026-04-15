@@ -265,21 +265,48 @@ for i, fila in enumerate(st.session_state.filas):
         
         c4.metric("Subtotal", f"{fila['horas']:g} hrs")
         
-        fila['competencia'] = st.selectbox("Competencia", list(DB_SENA.keys()), key=f"cp{i}")
-        ops = DB_SENA.get(fila['competencia'], [])
-        fila['rap'] = st.selectbox("RAP", ops, key=f"rp{i}") if ops else st.text_area("RAP manual", key=f"rpm{i}")
-
-        st.markdown("**Estado de la Competencia / RAP:**")
+        # --- INICIO LÓGICA DE HERENCIA INTELIGENTE ---
+        es_heredado = False
         if ficha_actual != "" and ficha_actual in fichas_memo:
+            # Si ya vimos esta ficha arriba, copiamos TODO y activamos el modo herencia
+            fila['competencia'] = fichas_memo[ficha_actual]['competencia']
+            fila['rap'] = fichas_memo[ficha_actual]['rap']
             fila['evaluado'] = fichas_memo[ficha_actual]['evaluado']
             fila['termino'] = fichas_memo[ficha_actual]['termino']
-            st.info(f"💡 Estado heredado de ficha {ficha_actual}")
+            es_heredado = True
+            
+        # UI: Competencia (Busca el índice correcto para el selectbox)
+        lista_comps = list(DB_SENA.keys())
+        idx_comp = lista_comps.index(fila['competencia']) if fila['competencia'] in lista_comps else 0
+        
+        fila['competencia'] = st.selectbox("Competencia", lista_comps, index=idx_comp, key=f"cp{i}", disabled=es_heredado)
+        
+        # UI: RAP
+        ops = DB_SENA.get(fila['competencia'], [])
+        if ops:
+            idx_rap = ops.index(fila['rap']) if fila['rap'] in ops else 0
+            fila['rap'] = st.selectbox("RAP", ops, index=idx_rap, key=f"rp{i}", disabled=es_heredado)
         else:
-            ce, ct = st.columns(2)
-            fila['evaluado'] = ce.radio("¿Está Evaluado?", ["SÍ", "NO"], index=0 if fila['evaluado']=="SÍ" else 1, horizontal=True, key=f"ev{i}")
-            fila['termino'] = ct.radio("¿Ya Terminó?", ["SÍ", "NO"], index=0 if fila['termino']=="SÍ" else 1, horizontal=True, key=f"tm{i}")
-            if ficha_actual != "":
-                fichas_memo[ficha_actual] = {'evaluado': fila['evaluado'], 'termino': fila['termino']}
+            fila['rap'] = st.text_area("RAP manual", value=fila['rap'], key=f"rpm{i}", disabled=es_heredado)
+
+        # UI: Estado
+        st.markdown("**Estado de la Competencia / RAP:**")
+        ce, ct = st.columns(2)
+        fila['evaluado'] = ce.radio("¿Está Evaluado?", ["SÍ", "NO"], index=0 if fila.get('evaluado', 'NO')=="SÍ" else 1, horizontal=True, key=f"ev{i}", disabled=es_heredado)
+        fila['termino'] = ct.radio("¿Ya Terminó?", ["SÍ", "NO"], index=0 if fila.get('termino', 'NO')=="SÍ" else 1, horizontal=True, key=f"tm{i}", disabled=es_heredado)
+
+        # Controlador visual y guardado en memoria
+        if es_heredado:
+            st.info("🔗 *Competencia, RAP y Estado vinculados automáticamente a la primera aparición de esta ficha. Si desea hacer cambios, edite la original de arriba.*")
+        elif ficha_actual != "":
+            # Si es la primera vez que se ve la ficha, se guarda como la versión "Maestra"
+            fichas_memo[ficha_actual] = {
+                'competencia': fila['competencia'],
+                'rap': fila['rap'],
+                'evaluado': fila['evaluado'],
+                'termino': fila['termino']
+            }
+        # --- FIN LÓGICA DE HERENCIA ---
 
 for idx in reversed(f_idx_del): st.session_state.filas.pop(idx); st.rerun()
 
