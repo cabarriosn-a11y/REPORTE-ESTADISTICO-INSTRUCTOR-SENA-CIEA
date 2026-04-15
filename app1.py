@@ -43,7 +43,7 @@ DB_SENA = cargar_competencias_gsheets()
 # ==========================================
 # MOTOR DE EXPORTACIÓN A PDF
 # ==========================================
-def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, tot_otr, tot_gen):
+def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, tot_otr, tot_gen, novedades_globales=[]):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     elements = []
@@ -90,6 +90,12 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
     
     elements.append(Spacer(1, 20))
     elements.append(Paragraph(f"<b>TOTAL HORAS REPORTADAS EN EL MES: &nbsp; {tot_gen:g} Horas</b>", style_center))
+
+    # --- NOVEDADES GLOBALES EN EL PDF ---
+    if novedades_globales:
+        elements.append(Spacer(1, 10))
+        nov_texto = ", ".join([n.strftime("%d/%m/%Y") for n in novedades_globales])
+        elements.append(Paragraph(f"<font color=red><b>Novedades/Festivos aplicados:</b></font> {nov_texto}", style_cell))
     
     fecha_gen = datetime.now().strftime("%d/%m/%Y %I:%M %p")
     firma_html = f"<br/><br/><br/>_________________________________<br/><b>FIRMA DEL INSTRUCTOR</b><br/>{nombre}<br/>C.C. {cedula}<br/><br/><font size=8 color=gray>Reporte generado el: {fecha_gen}</font>"
@@ -146,6 +152,20 @@ with st.container():
     meses_str = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     mes_rep = c3.selectbox("Mes del Reporte", meses_str, index=datetime.now().month - 1)
     anio_rep = c4.text_input("Año", value="2026")
+    
+# --- GESTOR DE NOVEDADES GLOBALES ---
+st.markdown("### 🗓️ Configuración de Novedades (Festivos, Permisos, etc.)")
+m_idx = meses_str.index(mes_rep) + 1
+a_int = int(anio_rep)
+
+dias_del_mes = [date(a_int, m_idx, d) for d in range(1, calendar.monthrange(a_int, m_idx)[1] + 1)]
+
+dias_novedad_global = st.multiselect(
+    "Seleccione los días que NO laboró (Festivos, Permiso Sindical, Incapacidad, etc.):",
+    options=dias_del_mes,
+    format_func=lambda x: x.strftime("%d/%m/%Y (%A)"),
+    help="Al seleccionar días aquí, se descontarán automáticamente de TODAS las fichas."
+)
 
 if 'filas' not in st.session_state: st.session_state.filas = []
 if 'otras_filas' not in st.session_state: st.session_state.otras_filas = []
@@ -215,7 +235,7 @@ if st.button("➕ Agregar Ficha Manual"):
     st.session_state.filas.append({"ficha":"","h_inicio":time(8,0),"h_fin":time(12,0),"dias":{d:False for d in ["L","M","Mi","J","V","S"]},"competencia":list(DB_SENA.keys())[0],"rap":"","horas":0,"evaluado":"NO","termino":"NO"})
 
 f_idx_del = []
-fichas_memo = {} # Para heredar Evaluado/Terminó
+fichas_memo = {} 
 
 for i, fila in enumerate(st.session_state.filas):
     with st.expander(f"📌 Ficha: {fila['ficha']} | {fila['h_inicio'].strftime('%H:%M')}", expanded=True):
@@ -229,20 +249,26 @@ for i, fila in enumerate(st.session_state.filas):
         cd = st.columns(6)
         for idx, d in enumerate(["L", "M", "Mi", "J", "V", "S"]): fila['dias'][d] = cd[idx].checkbox(d, fila['dias'][d], key=f"d{d}{i}")
         
-        m_idx, a_int = meses_str.index(mes_rep) + 1, int(anio_rep)
-        fechas = [date(a_int, m_idx, d) for d in range(1, calendar.monthrange(a_int, m_idx)[1]+1) if date(a_int, m_idx, d).weekday() in [idx for idx, d in enumerate(["L", "M", "Mi", "J", "V", "S"]) if fila['dias'][d]]]
-        excl = st.multiselect("Descontar festivos:", [f.strftime("%d/%m/%Y") for f in fechas], key=f"ex{i}")
+        # --- CÁLCULO AUTOMÁTICO CON NOVEDADES ---
+        mapa_dias = {"L": 0, "M": 1, "Mi": 2, "J": 3, "V": 4, "S": 5}
+        dias_activos_ficha = [mapa_dias[d] for d, activo in fila['dias'].items() if activo]
+        
+        fechas_finales = [f for f in dias_del_mes if f.weekday() in dias_activos_ficha and f not in dias_novedad_global]
         
         h_dia = (datetime.combine(date.today(), fila['h_fin']) - datetime.combine(date.today(), fila['h_inicio'])).seconds / 3600
-        fila['horas'] = (len(fechas) - len(excl)) * h_dia
+        
+        fila['horas'] = len(fechas_finales) * h_dia
         total_dir += fila['horas']
+        
+        if dias_novedad_global:
+            st.caption(f"✅ Se descontaron {len([f for f in dias_del_mes if f.weekday() in dias_activos_ficha and f in dias_novedad_global])} días por novedades globales en esta ficha.")
+        
         c4.metric("Subtotal", f"{fila['horas']:g} hrs")
         
         fila['competencia'] = st.selectbox("Competencia", list(DB_SENA.keys()), key=f"cp{i}")
         ops = DB_SENA.get(fila['competencia'], [])
         fila['rap'] = st.selectbox("RAP", ops, key=f"rp{i}") if ops else st.text_area("RAP manual", key=f"rpm{i}")
 
-        # BOTONES DE EVALUADO Y TERMINÓ
         st.markdown("**Estado de la Competencia / RAP:**")
         if ficha_actual != "" and ficha_actual in fichas_memo:
             fila['evaluado'] = fichas_memo[ficha_actual]['evaluado']
@@ -284,5 +310,5 @@ if os.path.exists("logo_sena.png"):
 st.sidebar.markdown(f"### 📊 RESUMEN\n**Formación Directa:** {total_dir:g} hrs\n**Otras Actividades:** {total_otr:g} hrs\n---\n**TOTAL MES:** {total_mes:g} hrs")
 
 if nombre_ins and total_mes > 0:
-    pdf_f = crear_pdf(nombre_ins, cedula_ins, mes_rep, anio_rep, st.session_state.filas, st.session_state.otras_filas, total_dir, total_otr, total_mes)
+    pdf_f = crear_pdf(nombre_ins, cedula_ins, mes_rep, anio_rep, st.session_state.filas, st.session_state.otras_filas, total_dir, total_otr, total_mes, dias_novedad_global)
     st.download_button(label="📥 DESCARGAR REPORTE PDF FINAL (3D)", data=pdf_f, file_name=f"Reporte_{nombre_ins}_{mes_rep}.pdf", mime="application/pdf")
