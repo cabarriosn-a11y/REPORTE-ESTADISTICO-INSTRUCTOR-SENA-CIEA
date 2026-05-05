@@ -75,10 +75,37 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
             horas_por_ficha[ficha] = 0
         horas_por_ficha[ficha] += f['horas']
     
-    # 1. TABLA DIRECTA — ahora con columna HRS MES
+    # 1. TABLA DIRECTA — con columna HRS MES fusionada por ficha
     elements.append(Paragraph("PARTE HORAS DIRECTAS - PROGRAMAS EN FORMACIÓN TITULADA", style_subtitle))
     data_table = [["FICHA", "DESDE", "HASTA", "L", "M", "MI", "J", "V", "S", "COMPETENCIA", "RAP", "EVAL", "TERM", "HRS", "HRS MES"]]
-    for f in datos_formacion:
+    
+    # Rastrear filas por ficha para hacer el merge
+    ficha_filas = {}  # ficha -> [lista de índices de fila en data_table]
+    
+    for idx_f, f in enumerate(datos_formacion):
+        row_idx = idx_f + 1  # +1 porque fila 0 es el header
+        ficha = f['ficha']
+        if ficha not in ficha_filas:
+            ficha_filas[ficha] = []
+        ficha_filas[ficha].append(row_idx)
+    
+    # Determinar qué filas son "primera de su grupo contiguo" para mostrar el valor
+    filas_con_valor = set()
+    for ficha, filas_idx in ficha_filas.items():
+        if len(filas_idx) == 1:
+            filas_con_valor.add(filas_idx[0])
+        else:
+            # Primera fila de cada bloque contiguo muestra el total
+            filas_con_valor.add(filas_idx[0])
+            for k in range(1, len(filas_idx)):
+                if filas_idx[k] != filas_idx[k-1] + 1:
+                    filas_con_valor.add(filas_idx[k])
+    
+    for idx_f, f in enumerate(datos_formacion):
+        row_idx = idx_f + 1
+        ficha = f['ficha']
+        valor_hrs_mes = f"{horas_por_ficha.get(ficha, 0):g}" if row_idx in filas_con_valor else ""
+        
         row = [
             f['ficha'],
             f['h_inicio'].strftime("%H:%M"),
@@ -94,21 +121,45 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
             f.get('evaluado', 'NO'),
             f.get('termino', 'NO'),
             f"{f['horas']:g}",
-            f"{horas_por_ficha.get(f['ficha'], 0):g}"
+            valor_hrs_mes
         ]
         data_table.append(row)
     data_table.append(["", "", "", "", "", "", "", "", "", "", "", "", "", "TOTAL:", f"{tot_dir:g}"])
 
     t_dir = Table(data_table, colWidths=[45, 35, 35, 15, 15, 15, 15, 15, 15, 180, 190, 30, 30, 25, 35])
-    t_dir.setStyle(TableStyle([
+    
+    # Estilos base
+    estilos_tabla = [
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('FONTSIZE', (0,0), (-1,-1), 8),
-        # Resaltar columna HRS MES con fondo suave
         ('BACKGROUND', (-1,1), (-1,-2), colors.Color(0.93, 0.97, 1.0)),
         ('FONTNAME', (-1,0), (-1,0), 'Helvetica-Bold'),
-    ]))
+    ]
+    
+    # Fusionar celdas HRS MES solo para filas CONTIGUAS de la misma ficha
+    col_hrs_mes = 14  # índice de la columna HRS MES (0-based)
+    for ficha, filas_idx in ficha_filas.items():
+        if len(filas_idx) > 1:
+            # Agrupar en bloques contiguos (por si la misma ficha no está junta)
+            grupos = []
+            grupo_actual = [filas_idx[0]]
+            for k in range(1, len(filas_idx)):
+                if filas_idx[k] == filas_idx[k-1] + 1:
+                    grupo_actual.append(filas_idx[k])
+                else:
+                    grupos.append(grupo_actual)
+                    grupo_actual = [filas_idx[k]]
+            grupos.append(grupo_actual)
+            
+            for grupo in grupos:
+                if len(grupo) > 1:
+                    estilos_tabla.append(('SPAN', (col_hrs_mes, grupo[0]), (col_hrs_mes, grupo[-1])))
+                    estilos_tabla.append(('FONTNAME', (col_hrs_mes, grupo[0]), (col_hrs_mes, grupo[-1]), 'Helvetica-Bold'))
+    
+    t_dir.setStyle(TableStyle(estilos_tabla))
     elements.append(t_dir)
     
     if datos_otras:
