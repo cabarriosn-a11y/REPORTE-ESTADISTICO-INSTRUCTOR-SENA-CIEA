@@ -65,16 +65,50 @@ def crear_pdf(nombre, cedula, mes, anio, datos_formacion, datos_otras, tot_dir, 
     info_text = f"<b>INSTRUCTOR:</b> {nombre} &nbsp;&nbsp;&nbsp;&nbsp; <b>CÉDULA:</b> {cedula} &nbsp;&nbsp;&nbsp;&nbsp; <b>MES:</b> {mes} / {anio}"
     elements.append(Paragraph(info_text, styles['Normal']))
     
-    # 1. TABLA DIRECTA
-    elements.append(Paragraph("PARTE HORAS DIRECTAS - PROGRAMAS EN FORMACIÓN TITULADA", style_subtitle))
-    data_table = [["FICHA", "DESDE", "HASTA", "L", "M", "MI", "J", "V", "S", "COMPETENCIA", "RAP", "EVAL", "TERM", "HRS"]]
+    # ========================================
+    # CALCULAR TOTAL DE HORAS POR FICHA
+    # ========================================
+    horas_por_ficha = {}
     for f in datos_formacion:
-        row = [f['ficha'], f['h_inicio'].strftime("%H:%M"), f['h_fin'].strftime("%H:%M"), "X" if f['dias']["L"] else "", "X" if f['dias']["M"] else "", "X" if f['dias']["Mi"] else "", "X" if f['dias']["J"] else "", "X" if f['dias']["V"] else "", "X" if f['dias']["S"] else "", Paragraph(f['competencia'], style_cell), Paragraph(f['rap'], style_cell), f.get('evaluado', 'NO'), f.get('termino', 'NO'), f"{f['horas']:g}"]
+        ficha = f['ficha']
+        if ficha not in horas_por_ficha:
+            horas_por_ficha[ficha] = 0
+        horas_por_ficha[ficha] += f['horas']
+    
+    # 1. TABLA DIRECTA — ahora con columna HRS MES
+    elements.append(Paragraph("PARTE HORAS DIRECTAS - PROGRAMAS EN FORMACIÓN TITULADA", style_subtitle))
+    data_table = [["FICHA", "DESDE", "HASTA", "L", "M", "MI", "J", "V", "S", "COMPETENCIA", "RAP", "EVAL", "TERM", "HRS", "HRS MES"]]
+    for f in datos_formacion:
+        row = [
+            f['ficha'],
+            f['h_inicio'].strftime("%H:%M"),
+            f['h_fin'].strftime("%H:%M"),
+            "X" if f['dias']["L"] else "",
+            "X" if f['dias']["M"] else "",
+            "X" if f['dias']["Mi"] else "",
+            "X" if f['dias']["J"] else "",
+            "X" if f['dias']["V"] else "",
+            "X" if f['dias']["S"] else "",
+            Paragraph(f['competencia'], style_cell),
+            Paragraph(f['rap'], style_cell),
+            f.get('evaluado', 'NO'),
+            f.get('termino', 'NO'),
+            f"{f['horas']:g}",
+            f"{horas_por_ficha.get(f['ficha'], 0):g}"
+        ]
         data_table.append(row)
-    data_table.append(["", "", "", "", "", "", "", "", "", "", "", "", "TOTAL:", f"{tot_dir:g}"])
+    data_table.append(["", "", "", "", "", "", "", "", "", "", "", "", "", "TOTAL:", f"{tot_dir:g}"])
 
-    t_dir = Table(data_table, colWidths=[45, 35, 35, 15, 15, 15, 15, 15, 15, 195, 205, 30, 30, 25])
-    t_dir.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.lightgrey), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.black), ('FONTSIZE', (0,0), (-1,-1), 8)]))
+    t_dir = Table(data_table, colWidths=[45, 35, 35, 15, 15, 15, 15, 15, 15, 180, 190, 30, 30, 25, 35])
+    t_dir.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        # Resaltar columna HRS MES con fondo suave
+        ('BACKGROUND', (-1,1), (-1,-2), colors.Color(0.93, 0.97, 1.0)),
+        ('FONTNAME', (-1,0), (-1,0), 'Helvetica-Bold'),
+    ]))
     elements.append(t_dir)
     
     if datos_otras:
@@ -274,10 +308,8 @@ for i, fila in enumerate(st.session_state.filas):
             fila['evaluado'] = fichas_memo[ficha_actual]['evaluado']
             fila['termino'] = fichas_memo[ficha_actual]['termino']
             
-            # 💡 EL TRUCO: Forzar a Streamlit a olvidar su valor anterior y usar el heredado
             st.session_state[f"cp{i}"] = fila['competencia']
             
-            # También forzamos la memoria del RAP (ya sea menú desplegable o texto manual)
             ops_memo = DB_SENA.get(fila['competencia'], [])
             if ops_memo and fila['rap'] in ops_memo:
                 st.session_state[f"rp{i}"] = fila['rap']
@@ -303,11 +335,9 @@ for i, fila in enumerate(st.session_state.filas):
         fila['evaluado'] = ce.radio("¿Está Evaluado?", ["SÍ", "NO"], index=0 if fila.get('evaluado', 'NO')=="SÍ" else 1, horizontal=True, key=f"ev{i}", disabled=es_heredado)
         fila['termino'] = ct.radio("¿Ya Terminó?", ["SÍ", "NO"], index=0 if fila.get('termino', 'NO')=="SÍ" else 1, horizontal=True, key=f"tm{i}", disabled=es_heredado)
 
-        # Controlador visual y guardado en memoria
         if es_heredado:
             st.info("🔗 *Competencia, RAP y Estado vinculados automáticamente a la primera aparición de esta ficha. Si desea hacer cambios, edite la original de arriba.*")
         elif ficha_actual != "":
-            # Si es la primera vez que se ve la ficha, se guarda como la versión "Maestra"
             fichas_memo[ficha_actual] = {
                 'competencia': fila['competencia'],
                 'rap': fila['rap'],
